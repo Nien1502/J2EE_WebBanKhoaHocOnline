@@ -28,6 +28,7 @@ document.addEventListener("DOMContentLoaded", function () {
     return String(course?.image ?? course?.Imag ?? "").trim();
   }
 
+  
   function resolveCourseImageUrl(course) {
     const imageValue = getCourseImageValue(course);
     if (!imageValue) return "../src/assets/img/blank-image.png";

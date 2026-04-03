@@ -1280,6 +1280,15 @@ label a {
     display: inline-block;
 }
 
+.status-failed {
+    background-color: #6b7280;
+    color: #fff;
+    padding: 5px 10px;
+    border-radius: 5px;
+    font-size: 15px;
+    display: inline-block;
+}
+
 .btn-chuaxuly {
     background-color: #dc1a1a;
 }
@@ -1298,6 +1307,18 @@ label a {
 
 .btn-daxuly::before {
     content: "\f00c";
+    font-family: "Font Awesome 6 Free";
+    position: absolute;
+    font-weight: 900;
+    left: 22px;
+}
+
+.btn-thatbai {
+    background-color: #6b7280;
+}
+
+.btn-thatbai::before {
+    content: "\f071";
     font-family: "Font Awesome 6 Free";
     position: absolute;
     font-weight: 900;

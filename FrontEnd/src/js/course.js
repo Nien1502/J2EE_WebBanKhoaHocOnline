@@ -4,6 +4,31 @@ document.addEventListener("DOMContentLoaded", function () {
     return API_BASE + (path.startsWith("/") ? path : "/" + path);
   };
 
+  function getAuthHeader() {
+    const token = localStorage.getItem("authToken") || "";
+    const tokenType = localStorage.getItem("authTokenType") || "Bearer";
+    const cachedHeader = localStorage.getItem("authHeader") || "";
+
+    if (cachedHeader && cachedHeader.trim()) {
+      return cachedHeader.trim();
+    }
+
+    if (token && token.trim()) {
+      return `${tokenType} ${token}`.trim();
+    }
+
+    return "";
+  }
+
+  function withAuthHeaders(extraHeaders) {
+    const headers = Object.assign({}, extraHeaders || {});
+    const authHeader = getAuthHeader();
+    if (authHeader) {
+      headers.Authorization = authHeader;
+    }
+    return headers;
+  }
+
   const purchasedCourseList = document.getElementById("purchasedCourseList");
   const courseCountEl = document.getElementById("courseCount");
 
@@ -25,7 +50,9 @@ document.addEventListener("DOMContentLoaded", function () {
   }
 
   async function fetchPurchasedCourseIds(userId) {
-    const ordersResponse = await fetch(apiUrl(`/api/orders/user/${userId}`));
+    const ordersResponse = await fetch(apiUrl(`/api/orders/user/${userId}`), {
+      headers: withAuthHeaders(),
+    });
     if (!ordersResponse.ok) {
       throw new Error("Không thể tải danh sách đơn hàng của bạn.");
     }
