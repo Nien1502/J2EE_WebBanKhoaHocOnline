@@ -4,6 +4,31 @@ document.addEventListener("DOMContentLoaded", function () {
     return API_BASE + (path.startsWith("/") ? path : "/" + path);
   };
 
+  function getAuthHeader() {
+    const token = localStorage.getItem("authToken") || "";
+    const tokenType = localStorage.getItem("authTokenType") || "Bearer";
+    const cachedHeader = localStorage.getItem("authHeader") || "";
+
+    if (cachedHeader && cachedHeader.trim()) {
+      return cachedHeader.trim();
+    }
+
+    if (token && token.trim()) {
+      return `${tokenType} ${token}`.trim();
+    }
+
+    return "";
+  }
+
+  function withAuthHeaders(extraHeaders) {
+    const headers = Object.assign({}, extraHeaders || {});
+    const authHeader = getAuthHeader();
+    if (authHeader) {
+      headers.Authorization = authHeader;
+    }
+    return headers;
+  }
+
   // Lấy thông tin user (có thể null nếu chưa đăng nhập)
   const loggedInUser = JSON.parse(localStorage.getItem("loggedInUser"));
   // Giỏ hàng tách theo user; nếu chưa đăng nhập thì dùng giỏ tạm guest.
@@ -148,6 +173,12 @@ document.addEventListener("DOMContentLoaded", function () {
         return;
       }
 
+      const authHeader = getAuthHeader();
+      if (!authHeader) {
+        alert("Phiên đăng nhập không hợp lệ. Vui lòng đăng nhập lại để thanh toán.");
+        return;
+      }
+
       const courseIds = cartItems
         .map(item => Number.parseInt(item.courseId, 10))
         .filter(Number.isInteger);
@@ -172,9 +203,9 @@ document.addEventListener("DOMContentLoaded", function () {
 
         const paymentResponse = await fetch(apiUrl("/api/payment/momo/create"), {
           method: "POST",
-          headers: {
+          headers: withAuthHeaders({
             "Content-Type": "application/json",
-          },
+          }),
           body: JSON.stringify(payload),
         });
 
@@ -227,7 +258,9 @@ document.addEventListener("DOMContentLoaded", function () {
     if (loggedInUser && loggedInUser.id) {
       try {
         // Gọi API để lấy danh sách đơn hàng đã xử lý của người dùng hiện tại
-        const response = await fetch(apiUrl(`/api/orders/user/${loggedInUser.id}`));
+        const response = await fetch(apiUrl(`/api/orders/user/${loggedInUser.id}`), {
+          headers: withAuthHeaders(),
+        });
         if (!response.ok) {
           throw new Error("Không thể tải danh sách đơn hàng của người dùng.");
         }

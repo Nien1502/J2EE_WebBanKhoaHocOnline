@@ -3,6 +3,31 @@ function apiUrl(path) {
     return `${API_BASE}${path}`;
 }
 
+function getAuthHeader() {
+    const token = localStorage.getItem('authToken') || '';
+    const tokenType = localStorage.getItem('authTokenType') || 'Bearer';
+    const cachedHeader = localStorage.getItem('authHeader') || '';
+
+    if (cachedHeader && cachedHeader.trim()) {
+        return cachedHeader.trim();
+    }
+
+    if (token && token.trim()) {
+        return `${tokenType} ${token}`.trim();
+    }
+
+    return '';
+}
+
+function withAuthHeaders(extraHeaders) {
+    const headers = Object.assign({}, extraHeaders || {});
+    const authHeader = getAuthHeader();
+    if (authHeader) {
+        headers.Authorization = authHeader;
+    }
+    return headers;
+}
+
 function getCategoryId(category) {
     return category?.id ?? category?.CategoryID ?? null;
 }
@@ -28,7 +53,7 @@ function getCoursePrice(course) {
 }
 
 function getCourseImage(course) {
-    return course?.image ?? course?.Imag ?? '../src/assets/img/blank-image.png';
+    return String(course?.image ?? course?.Imag ?? "").trim();
 }
 
 function getCourseCategoryId(course) {
@@ -86,6 +111,64 @@ function getOrderUserName(order) {
 
 function statusLabelFromEnum(status) {
     return status === 'SUCCESS' ? 'Da xu ly' : status === 'PENDING' ? 'Chua xu ly' : 'That bai';
+}
+
+  function resolveCourseImageUrl(course) {
+    const imageValue = getCourseImage(course);
+    if (!imageValue) return "../src/assets/img/blank-image.png";
+
+    if (/^(https?:)?\/\//i.test(imageValue) || imageValue.startsWith("data:")) {
+      return imageValue;
+    }
+
+    if (imageValue.includes("/")) {
+      if (imageValue.startsWith("/")) {
+        return API_BASE + imageValue;
+      }
+      return imageValue;
+    }
+
+    // DB chi luu ten file: uu tien lay anh tu static backend.
+    return apiUrl("/assets/images/" + encodeURIComponent(imageValue));
+  }
+
+function normalizeOrderStatusFilterValue(rawValue) {
+    const value = String(rawValue || '').trim().toUpperCase();
+    if (value === '1') return 'SUCCESS';
+    if (value === '0') return 'PENDING';
+    if (value === '3') return 'FAILED';
+    if (value === 'SUCCESS' || value === 'PENDING' || value === 'FAILED') {
+        return value;
+    }
+    return 'ALL';
+}
+
+function getOrderStatusBadge(statusEnum) {
+    if (statusEnum === 'SUCCESS') {
+        return '<span class="status-complete">Da xu ly</span>';
+    }
+    if (statusEnum === 'FAILED') {
+        return '<span class="status-failed">Thanh toan that bai</span>';
+    }
+    return '<span class="status-no-complete">Chua xu ly</span>';
+}
+
+async function fetchOrdersByStatusFilter(statusFilter) {
+    const normalizedStatus = normalizeOrderStatusFilterValue(statusFilter);
+    const endpoint = normalizedStatus === 'ALL'
+        ? '/api/orders'
+        : `/api/orders/status/${encodeURIComponent(normalizedStatus)}`;
+
+    const response = await fetch(apiUrl(endpoint), {
+        headers: withAuthHeaders(),
+    });
+
+    if (!response.ok) {
+        throw new Error(await response.text());
+    }
+
+    const orders = await response.json();
+    return Array.isArray(orders) ? orders : [];
 }
 
 //do sidebar open and close
@@ -167,9 +250,9 @@ async function getMoney() {
     try {
         const response = await fetch(apiUrl('/api/orders'), {
             method: 'GET',
-            headers: {
+            headers: withAuthHeaders({
                 'Content-Type': 'application/json',
-            },
+            }),
         });
 
         if (response.ok) {
@@ -319,7 +402,7 @@ async function showcoursesArr(courses) {
         courses.forEach(course => {
             const courseId = getCourseId(course);
             const price = Number(getCoursePrice(course) || 0).toLocaleString();
-            const image = getCourseImage(course);
+            const image = resolveCourseImageUrl(course);
             const name = getCourseName(course);
             const description = getCourseDescription(course);
             const categoryName = categoriesMap[getCourseCategoryId(course)] || "Khong co danh muc";
@@ -416,14 +499,14 @@ async function filterCoursesByCategory() {
     const searchKeyword = document.getElementById("chon-mon-input").value.toLowerCase(); // Lay tu khoa tim kiem tu input
 
     try {
-        const response = await fetch(apiUrl('/api/courses'));
+        const endpoint = selectedCategoryID
+            ? `/api/courses/category/${encodeURIComponent(selectedCategoryID)}`
+            : '/api/courses';
+
+        const response = await fetch(apiUrl(endpoint));
         if (response.ok) {
             const courses = await response.json();
-
-            // Loc danh sach khoa hoc theo CategoryID
-            let filteredCourses = selectedCategoryID
-                ? courses.filter(course => String(getCourseCategoryId(course)) === String(selectedCategoryID))
-                : courses;
+            let filteredCourses = Array.isArray(courses) ? courses : [];
 
             // Loc danh sach khoa hoc dua tren tu khoa tim kiem
             if (searchKeyword) {
@@ -1334,10 +1417,12 @@ document.getElementById("logout-acc").addEventListener('click', (e) => {
 // Doi trang thai don hang
 async function changeStatus(id, el) {
     try {
-        const currentStatus = el.innerHTML.trim();
-        const newStatus = currentStatus.includes("Chua xu ly") ? "SUCCESS" : "PENDING";
+        const currentStatus = String(el?.dataset?.status || "").toUpperCase();
+        const newStatus = currentStatus === "SUCCESS" ? "PENDING" : "SUCCESS";
 
-        const currentOrderResponse = await fetch(apiUrl(`/api/orders/${id}`));
+        const currentOrderResponse = await fetch(apiUrl(`/api/orders/${id}`), {
+            headers: withAuthHeaders(),
+        });
         if (!currentOrderResponse.ok) {
             console.error('Loi khi lay don hang:', await currentOrderResponse.text());
             return;
@@ -1346,7 +1431,7 @@ async function changeStatus(id, el) {
         const currentOrder = await currentOrderResponse.json();
         const response = await fetch(apiUrl(`/api/orders/${id}`), {
             method: 'PUT',
-            headers: { 'Content-Type': 'application/json' },
+            headers: withAuthHeaders({ 'Content-Type': 'application/json' }),
             body: JSON.stringify({
                 ...currentOrder,
                 id: getOrderId(currentOrder),
@@ -1355,14 +1440,15 @@ async function changeStatus(id, el) {
         });
 
         if (response.ok) {
+            el.classList.remove("btn-chuaxuly", "btn-daxuly", "btn-thatbai");
             if (newStatus === "SUCCESS") {
-                el.classList.remove("btn-chuaxuly");
                 el.classList.add("btn-daxuly");
+                el.innerHTML = "Da xu ly";
             } else {
-                el.classList.remove("btn-daxuly");
                 el.classList.add("btn-chuaxuly");
+                el.innerHTML = "Chua xu ly";
             }
-            el.innerHTML = newStatus === "SUCCESS" ? "Da xu ly" : "Chua xu ly";
+            el.dataset.status = newStatus;
             toast({ title: 'Success', message: 'Cap nhat trang thai thanh cong!', type: 'success', duration: 3000 });
             showOrder();
         } else {
@@ -1394,13 +1480,7 @@ async function showOrder(existingOrders = null) {
     try {
         let orders = existingOrders;
         if (!Array.isArray(orders)) {
-            const response = await fetch(apiUrl('/api/orders'));
-            if (!response.ok) {
-                console.error('Loi khi lay danh sach don hang:', await response.text());
-                document.getElementById("showOrder").innerHTML = `<td colspan="6">Khong co du lieu</td>`;
-                return;
-            }
-            orders = await response.json();
+            orders = await fetchOrdersByStatusFilter('ALL');
         }
 
             console.log("Danh sach don hang tu API:", orders); // Kiem tra du lieu tra ve tu API
@@ -1410,10 +1490,7 @@ async function showOrder(existingOrders = null) {
             } else {
                 orders.forEach((item) => {
                     const statusEnum = getOrderStatus(item);
-                    const isDone = statusEnum === 'SUCCESS';
-                    let status = isDone
-                        ? `<span class="status-complete">Da xu ly</span>`
-                        : `<span class="status-no-complete">Chua xu ly</span>`;
+                    let status = getOrderStatusBadge(statusEnum);
                     let date = formatDate(getOrderDate(item));
                     let userName = getOrderUserName(item);
                     const orderId = getOrderId(item);
@@ -1455,7 +1532,9 @@ function getOrderDetails(madon) {
 // Show Order Detail
 async function detailOrder(id) {
     try {
-        const orderResponse = await fetch(apiUrl(`/api/orders/${id}`));
+        const orderResponse = await fetch(apiUrl(`/api/orders/${id}`), {
+            headers: withAuthHeaders(),
+        });
         const detailsResponse = await fetch(apiUrl(`/api/order-details/order/${id}`));
 
         if (orderResponse.ok && detailsResponse.ok) {
@@ -1536,8 +1615,12 @@ async function detailOrder(id) {
             document.querySelector(".modal-detail-order").innerHTML = spHtml;
 
             const orderStatus = getOrderStatus(order);
-            let classDetailBtn = orderStatus === "SUCCESS" ? "btn-daxuly" : "btn-chuaxuly";
-            let textDetailBtn = orderStatus === "SUCCESS" ? "Da xu ly" : "Chua xu ly";
+            let classDetailBtn = orderStatus === "SUCCESS"
+                ? "btn-daxuly"
+                : (orderStatus === "FAILED" ? "btn-thatbai" : "btn-chuaxuly");
+            let textDetailBtn = orderStatus === "SUCCESS"
+                ? "Da xu ly"
+                : (orderStatus === "FAILED" ? "That bai" : "Chua xu ly");
             document.querySelector(".modal-detail-bottom").innerHTML = `
             <div class="modal-detail-bottom-left">
                 <div class="price-total">
@@ -1546,7 +1629,7 @@ async function detailOrder(id) {
                 </div>
             </div>
             <div class="modal-detail-bottom-right">
-                <button class="modal-detail-btn ${classDetailBtn}" onclick="changeStatus('${getOrderId(order)}', this)">${textDetailBtn}</button>
+                <button class="modal-detail-btn ${classDetailBtn}" data-status="${orderStatus}" onclick="changeStatus('${getOrderId(order)}', this)">${textDetailBtn}</button>
             </div>`;
 
             // Hien thi modal chi tiet don hang
@@ -1561,7 +1644,7 @@ async function detailOrder(id) {
 
 // Find Order
 async function findOrder() {
-    const status = parseInt(document.getElementById("tinh-trang").value); // Lay trang thai tu dropdown
+    const status = normalizeOrderStatusFilterValue(document.getElementById("tinh-trang").value);
     const keyword = String(document.getElementById("form-search-order").value || "").trim().toLowerCase();
     const startDate = document.getElementById("time-start").value;
     const endDate = document.getElementById("time-end").value;
@@ -1572,19 +1655,13 @@ async function findOrder() {
     }
 
     try {
-        const response = await fetch(apiUrl('/api/orders'));
-        if (!response.ok) {
-            console.error('Loi khi tim kiem don hang:', await response.text());
-            return;
-        }
-        const orders = await response.json();
+        const orders = await fetchOrdersByStatusFilter(status);
         const startDateAtZero = startDate ? new Date(`${startDate}T00:00:00`) : null;
         const endDateAtLastSecond = endDate ? new Date(`${endDate}T23:59:59`) : null;
 
         const filteredOrders = (Array.isArray(orders) ? orders : []).filter(order => {
             const orderStatus = getOrderStatus(order);
-            if (status === 1 && orderStatus !== 'SUCCESS') return false;
-            if (status === 0 && orderStatus !== 'PENDING') return false;
+            if (status !== 'ALL' && orderStatus !== status) return false;
 
             if (keyword) {
                 const matchKeyword =
@@ -1610,7 +1687,7 @@ async function findOrder() {
 }
 
 async function cancelSearchOrder() {
-    document.getElementById("tinh-trang").value = 2;
+    document.getElementById("tinh-trang").value = 'ALL';
     document.getElementById("form-search-order").value = "";
     document.getElementById("time-start").value = "";
     document.getElementById("time-end").value = "";
@@ -1651,7 +1728,7 @@ async function thongKe(sortMode = 0) {
 
     try {
         const [ordersResponse, coursesResponse] = await Promise.all([
-            fetch(apiUrl('/api/orders')),
+            fetch(apiUrl('/api/orders'), { headers: withAuthHeaders() }),
             fetch(apiUrl('/api/courses'))
         ]);
 
