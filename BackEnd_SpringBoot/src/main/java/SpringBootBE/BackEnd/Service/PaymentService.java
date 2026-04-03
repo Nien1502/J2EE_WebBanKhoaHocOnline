@@ -16,6 +16,10 @@ import SpringBootBE.BackEnd.repository.OrderDetailRepository;
 import SpringBootBE.BackEnd.repository.OrderRepository;
 import SpringBootBE.BackEnd.repository.UserRepository;
 import jakarta.transaction.Transactional;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 
 import java.math.BigDecimal;
@@ -37,6 +41,8 @@ import java.util.stream.Collectors;
 @Transactional
 public class PaymentService {
 
+    private static final Logger logger = LoggerFactory.getLogger(PaymentService.class);
+
     private final MomoConfig momoConfig;
     private final OrderRepository orderRepository;
     private final OrderDetailRepository orderDetailRepository;
@@ -45,6 +51,7 @@ public class PaymentService {
     private final EnrollmentRepository enrollmentRepository;
     private final EnrollmentService enrollmentService;
     private final HttpClient httpClient = HttpClient.newHttpClient();
+    private final long pendingTimeoutMinutes;
 
     public PaymentService(MomoConfig momoConfig,
                           OrderRepository orderRepository,
@@ -52,7 +59,8 @@ public class PaymentService {
                           UserRepository userRepository,
                           CourseRepository courseRepository,
                           EnrollmentRepository enrollmentRepository,
-                          EnrollmentService enrollmentService) {
+                          EnrollmentService enrollmentService,
+                          @Value("${payment.pending-timeout-minutes:30}") long pendingTimeoutMinutes) {
         this.momoConfig = momoConfig;
         this.orderRepository = orderRepository;
         this.orderDetailRepository = orderDetailRepository;
@@ -60,6 +68,27 @@ public class PaymentService {
         this.courseRepository = courseRepository;
         this.enrollmentRepository = enrollmentRepository;
         this.enrollmentService = enrollmentService;
+        this.pendingTimeoutMinutes = Math.max(1L, pendingTimeoutMinutes);
+    }
+
+    @Scheduled(fixedDelayString = "${payment.pending-order-check-delay-ms:60000}")
+    public void expirePendingOrders() {
+        LocalDateTime expireBefore = LocalDateTime.now().minusMinutes(pendingTimeoutMinutes);
+        List<Order> expiredOrders = orderRepository.findByStatusAndOrderDateBefore(Order.OrderStatus.PENDING, expireBefore);
+
+        if (expiredOrders.isEmpty()) {
+            return;
+        }
+
+        for (Order order : expiredOrders) {
+            if (order == null || order.getStatus() != Order.OrderStatus.PENDING) {
+                continue;
+            }
+
+            String requestId = extractNoteValue(order.getNotes(), "requestId");
+            markOrderFailed(order, requestId, null, 408, "Hết thời gian thanh toán.");
+            logger.info("Auto-expired pending order id={} after {} minutes", order.getId(), pendingTimeoutMinutes);
+        }
     }
 
     public synchronized MomoPaymentResponse createMomoPayment(MomoPaymentRequest request) {
