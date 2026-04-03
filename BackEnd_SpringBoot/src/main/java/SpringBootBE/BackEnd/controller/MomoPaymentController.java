@@ -1,6 +1,7 @@
 package SpringBootBE.BackEnd.controller;
 
 import SpringBootBE.BackEnd.Service.PaymentService;
+import SpringBootBE.BackEnd.config.JwtTokenService;
 import SpringBootBE.BackEnd.dto.MomoCallbackResponse;
 import SpringBootBE.BackEnd.dto.MomoPaymentRequest;
 import SpringBootBE.BackEnd.dto.MomoPaymentResponse;
@@ -17,13 +18,38 @@ import java.util.Map;
 public class MomoPaymentController {
 
     private final PaymentService paymentService;
+    private final JwtTokenService jwtTokenService;
 
-    public MomoPaymentController(PaymentService paymentService) {
+    public MomoPaymentController(PaymentService paymentService,
+                                 JwtTokenService jwtTokenService) {
         this.paymentService = paymentService;
+        this.jwtTokenService = jwtTokenService;
     }
 
     @PostMapping("/create")
-    public ResponseEntity<?> createPayment(@RequestBody MomoPaymentRequest request) {
+    public ResponseEntity<?> createPayment(@RequestHeader(value = "Authorization", required = false) String authorizationHeader,
+                                           @RequestBody MomoPaymentRequest request) {
+        JwtTokenService.AuthPrincipal authPrincipal;
+        try {
+            authPrincipal = jwtTokenService.parseAuthorizationHeader(authorizationHeader);
+        } catch (IllegalArgumentException exception) {
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body(errorBody(exception.getMessage()));
+        }
+
+        if (!authPrincipal.isStudent()) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN)
+                    .body(errorBody("Chỉ Student được phép khởi tạo thanh toán MoMo."));
+        }
+
+        if (request != null && request.getUserId() != null && !request.getUserId().equals(authPrincipal.userId())) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN)
+                    .body(errorBody("userId không khớp với người dùng trong token."));
+        }
+
+        if (request != null) {
+            request.setUserId(authPrincipal.userId());
+        }
+
         try {
             MomoPaymentResponse response = paymentService.createMomoPayment(request);
             return ResponseEntity.ok(response);

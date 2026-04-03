@@ -1,6 +1,7 @@
 package SpringBootBE.BackEnd.controller;
 
 import SpringBootBE.BackEnd.Service.PaymentService;
+import SpringBootBE.BackEnd.config.JwtTokenService;
 import SpringBootBE.BackEnd.dto.MomoCallbackResponse;
 import SpringBootBE.BackEnd.dto.MomoPaymentRequest;
 import SpringBootBE.BackEnd.dto.MomoPaymentResponse;
@@ -19,6 +20,7 @@ import java.util.Map;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.argThat;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.mockito.Mockito.verify;
@@ -30,46 +32,138 @@ class MomoPaymentControllerTest {
     @Mock
     private PaymentService paymentService;
 
+    @Mock
+    private JwtTokenService jwtTokenService;
+
     @InjectMocks
     private MomoPaymentController momoPaymentController;
 
     @Test
     void createPayment_WhenValidRequest_ReturnsOk() {
+        String authHeader = "Bearer valid-token";
         MomoPaymentRequest request = new MomoPaymentRequest();
         request.setUserId(1);
         request.setCourseIds(List.of(2, 3));
+        JwtTokenService.AuthPrincipal authPrincipal = new JwtTokenService.AuthPrincipal(
+                1,
+                "student@mail.com",
+                "Student",
+                "student",
+                9999999999L
+        );
+        when(jwtTokenService.parseAuthorizationHeader(authHeader)).thenReturn(authPrincipal);
 
         MomoPaymentResponse expected = new MomoPaymentResponse();
         expected.setMessage("Khởi tạo thanh toán thành công.");
         expected.setResultCode(0);
         when(paymentService.createMomoPayment(request)).thenReturn(expected);
 
-        ResponseEntity<?> response = momoPaymentController.createPayment(request);
+        ResponseEntity<?> response = momoPaymentController.createPayment(authHeader, request);
 
         assertEquals(HttpStatus.OK, response.getStatusCode());
         assertEquals(expected, response.getBody());
+        assertEquals(1, request.getUserId());
+        verify(jwtTokenService).parseAuthorizationHeader(authHeader);
         verify(paymentService).createMomoPayment(request);
     }
 
     @Test
-    void createPayment_WhenInvalidRequest_ReturnsBadRequestErrorBody() {
+    void createPayment_WhenMissingAuth_ReturnsUnauthorized() {
         MomoPaymentRequest request = new MomoPaymentRequest();
-        when(paymentService.createMomoPayment(request)).thenThrow(new IllegalArgumentException("Thiếu userId."));
+        when(jwtTokenService.parseAuthorizationHeader(null)).thenThrow(new IllegalArgumentException("Thiếu Authorization header."));
 
-        ResponseEntity<?> response = momoPaymentController.createPayment(request);
+        ResponseEntity<?> response = momoPaymentController.createPayment(null, request);
 
-        assertEquals(HttpStatus.BAD_REQUEST, response.getStatusCode());
+        assertEquals(HttpStatus.UNAUTHORIZED, response.getStatusCode());
         Map<?, ?> body = assertInstanceOf(Map.class, response.getBody());
-        assertEquals("Thiếu userId.", body.get("message"));
+        assertEquals("Thiếu Authorization header.", body.get("message"));
         assertFalse((Boolean) body.get("success"));
     }
 
     @Test
-    void createPayment_WhenGatewayError_ReturnsBadGatewayErrorBody() {
+    void createPayment_WhenRoleIsNotStudent_ReturnsForbidden() {
+        String authHeader = "Bearer admin-token";
         MomoPaymentRequest request = new MomoPaymentRequest();
+        JwtTokenService.AuthPrincipal authPrincipal = new JwtTokenService.AuthPrincipal(
+                1,
+                "admin@mail.com",
+                "Admin",
+                "admin",
+                9999999999L
+        );
+        when(jwtTokenService.parseAuthorizationHeader(authHeader)).thenReturn(authPrincipal);
+
+        ResponseEntity<?> response = momoPaymentController.createPayment(authHeader, request);
+
+        assertEquals(HttpStatus.FORBIDDEN, response.getStatusCode());
+        Map<?, ?> body = assertInstanceOf(Map.class, response.getBody());
+        assertEquals("Chỉ Student được phép khởi tạo thanh toán MoMo.", body.get("message"));
+        assertFalse((Boolean) body.get("success"));
+    }
+
+    @Test
+    void createPayment_WhenRequestUserMismatch_ReturnsForbidden() {
+        String authHeader = "Bearer valid-token";
+        MomoPaymentRequest request = new MomoPaymentRequest();
+        request.setUserId(99);
+
+        JwtTokenService.AuthPrincipal authPrincipal = new JwtTokenService.AuthPrincipal(
+                1,
+                "student@mail.com",
+                "Student",
+                "student",
+                9999999999L
+        );
+        when(jwtTokenService.parseAuthorizationHeader(authHeader)).thenReturn(authPrincipal);
+
+        ResponseEntity<?> response = momoPaymentController.createPayment(authHeader, request);
+
+        assertEquals(HttpStatus.FORBIDDEN, response.getStatusCode());
+        Map<?, ?> body = assertInstanceOf(Map.class, response.getBody());
+        assertEquals("userId không khớp với người dùng trong token.", body.get("message"));
+        assertFalse((Boolean) body.get("success"));
+    }
+
+    @Test
+    void createPayment_WhenInvalidRequest_ReturnsBadRequestErrorBody() {
+        String authHeader = "Bearer valid-token";
+        MomoPaymentRequest request = new MomoPaymentRequest();
+        request.setCourseIds(List.of());
+        JwtTokenService.AuthPrincipal authPrincipal = new JwtTokenService.AuthPrincipal(
+                1,
+                "student@mail.com",
+                "Student",
+                "student",
+                9999999999L
+        );
+        when(jwtTokenService.parseAuthorizationHeader(authHeader)).thenReturn(authPrincipal);
+        when(paymentService.createMomoPayment(request)).thenThrow(new IllegalArgumentException("Danh sách khóa học không được để trống."));
+
+        ResponseEntity<?> response = momoPaymentController.createPayment(authHeader, request);
+
+        assertEquals(HttpStatus.BAD_REQUEST, response.getStatusCode());
+        Map<?, ?> body = assertInstanceOf(Map.class, response.getBody());
+        assertEquals("Danh sách khóa học không được để trống.", body.get("message"));
+        assertFalse((Boolean) body.get("success"));
+        assertEquals(1, request.getUserId());
+    }
+
+    @Test
+    void createPayment_WhenGatewayError_ReturnsBadGatewayErrorBody() {
+        String authHeader = "Bearer valid-token";
+        MomoPaymentRequest request = new MomoPaymentRequest();
+        request.setCourseIds(List.of(1));
+        JwtTokenService.AuthPrincipal authPrincipal = new JwtTokenService.AuthPrincipal(
+                1,
+                "student@mail.com",
+                "Student",
+                "student",
+                9999999999L
+        );
+        when(jwtTokenService.parseAuthorizationHeader(authHeader)).thenReturn(authPrincipal);
         when(paymentService.createMomoPayment(request)).thenThrow(new IllegalStateException("MoMo API lỗi."));
 
-        ResponseEntity<?> response = momoPaymentController.createPayment(request);
+        ResponseEntity<?> response = momoPaymentController.createPayment(authHeader, request);
 
         assertEquals(HttpStatus.BAD_GATEWAY, response.getStatusCode());
         Map<?, ?> body = assertInstanceOf(Map.class, response.getBody());
@@ -109,10 +203,12 @@ class MomoPaymentControllerTest {
 
         verify(paymentService).handleMomoIpn(argThat(delegatedData -> {
             assertNotNull(delegatedData);
-            return "MOMO_1_ABC".equals(delegatedData.get("orderId"))
+            boolean matched = "MOMO_1_ABC".equals(delegatedData.get("orderId"))
                     && "0".equals(delegatedData.get("resultCode"))
                     && "123456789".equals(delegatedData.get("transId"))
                     && "".equals(delegatedData.get("message"));
+            assertTrue(matched);
+            return matched;
         }));
     }
 }

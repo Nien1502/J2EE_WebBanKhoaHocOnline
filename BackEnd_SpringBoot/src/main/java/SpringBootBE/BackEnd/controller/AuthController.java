@@ -1,7 +1,6 @@
 package SpringBootBE.BackEnd.controller;
 
 import SpringBootBE.BackEnd.Service.AuthService;
-import SpringBootBE.BackEnd.dto.CountResponse;
 import SpringBootBE.BackEnd.dto.LoginRequest;
 import SpringBootBE.BackEnd.dto.LoginResponse;
 import SpringBootBE.BackEnd.dto.RegisterRequest;
@@ -10,6 +9,9 @@ import jakarta.transaction.Transactional;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
+
+import java.util.LinkedHashMap;
+import java.util.Map;
 
 @RestController
 @RequestMapping("/api/auth")
@@ -62,9 +64,12 @@ public class AuthController {
     }
 
     @GetMapping("/users/non-admins/count")
-    public ResponseEntity<CountResponse> getNonAdminUserCount() {
+    public ResponseEntity<Map<String, Object>> getNonAdminUserCount() {
         Integer count = authService.getNonAdminUserCount();
-        return ResponseEntity.ok(new CountResponse("Số lượng user không có quyền admin.", count));
+        LinkedHashMap<String, Object> response = new LinkedHashMap<>();
+        response.put("message", "Số lượng user không có quyền admin.");
+        response.put("count", count);
+        return ResponseEntity.ok(response);
     }
 
     @PostMapping("/users/checklogin")
